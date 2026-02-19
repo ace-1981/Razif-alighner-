@@ -47,19 +47,16 @@ const int SEEK_PWM_FINE = 25;
 const uint16_t BOUNCE_DELAY_MS = 80;
 
 // Homing states:
-// 0) Go RIGHT at full speed until RIGHT LIMIT (ignore center)
-// 1) Go LEFT at normal speed until CENTER sensor ON (first pass)
-// 2) Reverse RIGHT at slow speed, wait for center OFF then ON (second pass)
-// 3) Done - centered!
+// 1) Find center (fast) until CENTER becomes ON
+// 2) Backoff (slow) until CENTER becomes OFF
+// 3) Approach (fine) until CENTER becomes ON again
+// 4) Done
 enum HomingState : uint8_t {
-  SEEK_GO_RIGHT_TO_LIMIT = 0,
-  SEEK_LEFT_TO_CENTER    = 1,
-  SEEK_SLOW_RIGHT_REENTER = 2,
-  SEEK_DONE              = 3
+  SEEK_FIND_CENTER_FAST = 0,
+  SEEK_BACKOFF_UNTIL_OFF = 1,
+  SEEK_APPROACH_FINE = 2,
+  SEEK_DONE = 3
 };
-
-// sub-state for stage 2: waiting for center to go OFF before ON again
-bool seekPassedCenter = false;
 
 HomingState homingState = SEEK_FIND_CENTER_FAST;
 
@@ -127,66 +124,86 @@ float rawToV(int raw) {
 
 // ======================= HOMING CONTROL =======================
 void homingReset() {
-  homingState = SEEK_GO_RIGHT_TO_LIMIT;
-  seekPassedCenter = false;
-  seekDirRight = true;
+  homingState = SEEK_FIND_CENTER_FAST;
+  seekDirRight = true;       // start moving right first
   motorStop();
+}
+
+// Bounce direction at limits (works in all states where we move in seekDir direction)
+void updateSeekDirOnLimits() {
+  if (seekDirRight && limitRightActive()) { motorStop(); seekDirRight = false; delay(BOUNCE_DELAY_MS); }
+  if (!seekDirRight && limitLeftActive()) { motorStop(); seekDirRight = true;  delay(BOUNCE_DELAY_MS); }
 }
 
 void homingStep() {
   bool cen = centerSensorActive();
 
-  // Safety: both limits active at once -> stop
+  // Safety: impossible that both limits are active -> stop
   if (limitLeftActive() && limitRightActive()) { motorStop(); return; }
 
   switch (homingState) {
 
-    // ── Stage 0: go RIGHT until right limit (ignore center) ──
-    case SEEK_GO_RIGHT_TO_LIMIT: {
-      if (limitRightActive()) {
-        motorStop();
-        delay(BOUNCE_DELAY_MS);
-        homingState = SEEK_LEFT_TO_CENTER;
-        return;
-      }
-      motorRight(SEEK_PWM_FAST);
-      return;
-    }
-
-    // ── Stage 1: go LEFT until center sensor ON (first pass) ──
-    case SEEK_LEFT_TO_CENTER: {
+    case SEEK_FIND_CENTER_FAST: {
+      // If center is ON -> stop, go to backoff phase
       if (cen) {
         motorStop();
-        delay(BOUNCE_DELAY_MS);
-        seekPassedCenter = false;  // reset for stage 2
-        homingState = SEEK_SLOW_RIGHT_REENTER;
+        homingState = SEEK_BACKOFF_UNTIL_OFF;
         return;
       }
-      // safety: if we hit left limit without finding center -> error, stay stopped
-      if (limitLeftActive()) { motorStop(); return; }
-      motorLeft(SEEK_PWM_SLOW);
+
+      // Bounce between limits while searching
+      updateSeekDirOnLimits();
+
+      // Move fast in seekDir
+      if (seekDirRight) {
+        if (!limitRightActive()) motorRight(SEEK_PWM_FAST);
+        else motorStop();
+      } else {
+        if (!limitLeftActive()) motorLeft(SEEK_PWM_FAST);
+        else motorStop();
+      }
       return;
     }
 
-    // ── Stage 2: reverse RIGHT slowly ──
-    //    first wait for center to go OFF, then stop when it comes ON again
-    case SEEK_SLOW_RIGHT_REENTER: {
-      if (!seekPassedCenter) {
-        // still on the center zone, keep moving right slowly until OFF
-        if (!cen) {
-          seekPassedCenter = true;  // we left the center zone
-        }
-      } else {
-        // we already passed off the center; now wait for ON = second hit
-        if (cen) {
-          motorStop();
-          homingState = SEEK_DONE;
-          return;
-        }
+    case SEEK_BACKOFF_UNTIL_OFF: {
+      // Move opposite direction SLOW until center becomes OFF
+      if (!cen) {
+        motorStop();
+        homingState = SEEK_APPROACH_FINE;
+        return;
       }
-      // safety: don't crash into right limit
-      if (limitRightActive()) { motorStop(); return; }
-      motorRight(SEEK_PWM_FINE);
+
+      // backoff opposite seekDir
+      if (seekDirRight) { // seekDir was right => backoff left
+        if (!limitLeftActive()) motorLeft(SEEK_PWM_SLOW);
+        else if (!limitRightActive()) motorRight(SEEK_PWM_SLOW);
+        else motorStop();
+      } else {            // seekDir was left => backoff right
+        if (!limitRightActive()) motorRight(SEEK_PWM_SLOW);
+        else if (!limitLeftActive()) motorLeft(SEEK_PWM_SLOW);
+        else motorStop();
+      }
+      return;
+    }
+
+    case SEEK_APPROACH_FINE: {
+      // Now approach again VERY SLOW in seekDir until center becomes ON
+      if (cen) {
+        motorStop();
+        homingState = SEEK_DONE;
+        return;
+      }
+
+      // Safety bounce (in case center is close to limit)
+      updateSeekDirOnLimits();
+
+      if (seekDirRight) {
+        if (!limitRightActive()) motorRight(SEEK_PWM_FINE);
+        else motorStop();
+      } else {
+        if (!limitLeftActive()) motorLeft(SEEK_PWM_FINE);
+        else motorStop();
+      }
       return;
     }
 
@@ -288,7 +305,7 @@ void loop() {
   } else {
     // normal analog mode
     // reset homing so next seek starts clean
-    if (homingState != SEEK_GO_RIGHT_TO_LIMIT) homingReset();
+    if (homingState != SEEK_FIND_CENTER_FAST) homingReset();
     analogControlStep();
   }
 
