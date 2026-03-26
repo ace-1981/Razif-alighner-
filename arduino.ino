@@ -50,6 +50,37 @@ void processSerialCommands() {
   }
 }
 
+// ======================= LIMIT AUTO-BACKOFF =======================
+// When motor first touches a limit, back off automatically so it never stays stuck
+const int    LIMIT_BACKOFF_PWM = 55;
+const uint16_t LIMIT_BACKOFF_MS  = 150;
+
+bool prevLimLeft  = false;
+bool prevLimRight = false;
+
+void checkLimitBackoff() {
+  bool limL = limitLeftActive();
+  bool limR = limitRightActive();
+
+  if (limL && !prevLimLeft) {      // just hit left limit
+    motorStop();
+    delay(20);
+    motorRight(LIMIT_BACKOFF_PWM);
+    delay(LIMIT_BACKOFF_MS);
+    motorStop();
+  }
+  if (limR && !prevLimRight) {     // just hit right limit
+    motorStop();
+    delay(20);
+    motorLeft(LIMIT_BACKOFF_PWM);
+    delay(LIMIT_BACKOFF_MS);
+    motorStop();
+  }
+
+  prevLimLeft  = limL;
+  prevLimRight = limR;
+}
+
 // ======================= HOMING (SEEK) =======================
 // Fast search speed
 const int SEEK_PWM_FAST = 18;
@@ -313,6 +344,7 @@ void setup() {
 
 void loop() {
   processSerialCommands();
+  checkLimitBackoff();
 
   if (g_jog != 0) {
     // jog override: move motor directly, ignore seek/analog
