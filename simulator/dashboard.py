@@ -432,15 +432,19 @@ class DashboardApp:
 
         ttk.Separator(sim_ctrl, orient="vertical").grid(row=0, column=8, sticky="ns", padx=6)
 
-        btn_left = ttk.Button(sim_ctrl, text="◄ LEFT")
-        btn_left.grid(row=0, column=9, padx=4)
-        btn_left.bind("<ButtonPress>",   lambda e: self._jog_start(-1))
-        btn_left.bind("<ButtonRelease>", lambda e: self._jog_stop())
+        self.btn_jog_left = tk.Button(sim_ctrl, text="\u25c4 LEFT",
+                                      bg="#2a4a7a", fg="white", relief=tk.RAISED,
+                                      activebackground="#1a3a6a")
+        self.btn_jog_left.grid(row=0, column=9, padx=4)
+        self.btn_jog_left.bind("<Button-1>",        lambda e: self._jog_start(-1))
+        self.btn_jog_left.bind("<ButtonRelease-1>", lambda e: self._jog_stop())
 
-        btn_right = ttk.Button(sim_ctrl, text="RIGHT ►")
-        btn_right.grid(row=0, column=10, padx=4)
-        btn_right.bind("<ButtonPress>",   lambda e: self._jog_start(+1))
-        btn_right.bind("<ButtonRelease>", lambda e: self._jog_stop())
+        self.btn_jog_right = tk.Button(sim_ctrl, text="RIGHT \u25ba",
+                                       bg="#2a4a7a", fg="white", relief=tk.RAISED,
+                                       activebackground="#1a3a6a")
+        self.btn_jog_right.grid(row=0, column=10, padx=4)
+        self.btn_jog_right.bind("<Button-1>",        lambda e: self._jog_start(+1))
+        self.btn_jog_right.bind("<ButtonRelease-1>", lambda e: self._jog_stop())
 
         sim_ctrl.columnconfigure(2, weight=1)
         sim_ctrl.columnconfigure(4, weight=1)
@@ -522,7 +526,10 @@ class DashboardApp:
     def _on_source_change(self) -> None:
         self.source = self.source_var.get()
         is_sim = self.source == self.SRC_SIM
+        jog_btns = {self.btn_jog_left, self.btn_jog_right}
         for child in self.sim_ctrl_frame.winfo_children():
+            if child in jog_btns:
+                continue   # jog buttons always enabled
             try:
                 child.config(state="normal" if is_sim else "disabled")
             except Exception:
