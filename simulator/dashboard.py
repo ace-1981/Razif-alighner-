@@ -1,9 +1,9 @@
-"""
+﻿"""
 Razif Aligner Dashboard
 =======================
 Two modes:
-  1. SERIAL  – reads live telemetry from a real Arduino via COM port
-  2. SIMULATION – offline physics simulation (no hardware needed)
+  1. SERIAL  Γאף reads live telemetry from a real Arduino via COM port
+  2. SIMULATION Γאף offline physics simulation (no hardware needed)
 
 Arduino telemetry format (each ~100 ms):
   T seek=1 cen=0 limL=0 limR=0 rawD2=1 rawD3=1 rawLL=0 rawLR=0 aV=2.345 dir=1 pwm=90 hs=0 seekDir=1
@@ -30,8 +30,8 @@ except ImportError:
     HAS_SERIAL = False
 
 
-# ───────────────────── constants ─────────────────────
-HOMING_NAMES = {0: "RIGHT→LIMIT", 1: "LEFT→CENTER", 2: "SLOW RIGHT", 3: "DONE"}
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא constants ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+HOMING_NAMES = {0: "RIGHTΓזעLIMIT", 1: "LEFTΓזעCENTER", 2: "SLOW RIGHT", 3: "DONE"}
 DIR_NAMES = {-1: "LEFT", 0: "STOP", 1: "RIGHT"}
 TELEMETRY_RE = re.compile(
     r"seek=(\d+)\s+cen=(\d+)\s+limL=(\d+)\s+limR=(\d+)"
@@ -41,7 +41,7 @@ TELEMETRY_RE = re.compile(
 )
 
 
-# ───────────────────── serial reader ─────────────────────
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא serial reader ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 @dataclass
 class SerialData:
     """Latest parsed telemetry snapshot from the Arduino."""
@@ -74,7 +74,7 @@ class SerialReader:
         self._thread: Optional[threading.Thread] = None
         self._start_time = time.monotonic()
 
-    # ── public api ──
+    # ΓפאΓפא public api ΓפאΓפא
     def start(self) -> None:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -94,7 +94,7 @@ class SerialReader:
             self.data.updated = False
             return d
 
-    # ── background loop ──
+    # ΓפאΓפא background loop ΓפאΓפא
     def _run(self) -> None:
         try:
             self._ser = serial.Serial(self.port, self.baud, timeout=0.5)
@@ -153,7 +153,7 @@ class SerialReader:
             self.data.t = time.monotonic() - self._start_time
 
 
-# ───────────────────── simulation engine (unchanged) ─────────────────────
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא simulation engine (unchanged) ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 class HomingState(IntEnum):
     SEEK_GO_RIGHT_TO_LIMIT = 0
     SEEK_LEFT_TO_CENTER    = 1
@@ -202,6 +202,7 @@ class AlignerSimulator:
     st: AlignerState = field(default_factory=AlignerState)
     sensor_bias_v: float = 0.0
     sensor_noise_v: float = 0.01
+    manual_override: int = 0   # -1 = force left, 0 = normal, +1 = force right
 
     def reset_homing(self) -> None:
         self.st.homing_state = HomingState.SEEK_GO_RIGHT_TO_LIMIT
@@ -313,7 +314,12 @@ class AlignerSimulator:
         self.st.t += dt
         self._update_limits(); self._update_center_sensor()
         self.st.analog_v = self._position_to_voltage()
-        if self.st.mode_seek:
+        if self.manual_override != 0:
+            if self.manual_override > 0:
+                self.motor_stop() if self.st.limit_right_active else self.motor_right(self.cfg.pwm_min)
+            else:
+                self.motor_stop() if self.st.limit_left_active else self.motor_left(self.cfg.pwm_min)
+        elif self.st.mode_seek:
             self.motor_stop() if self.st.homing_state == HomingState.SEEK_DONE else self._homing_step()
         else:
             if self.st.homing_state != HomingState.SEEK_GO_RIGHT_TO_LIMIT:
@@ -323,14 +329,14 @@ class AlignerSimulator:
         self._update_limits(); self._update_center_sensor()
 
 
-# ───────────────────── COM-port helpers ─────────────────────
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא COM-port helpers ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 def available_ports() -> list[str]:
     if not HAS_SERIAL:
         return []
     return [p.device for p in list_ports.comports()]
 
 
-# ───────────────────── dashboard ─────────────────────
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא dashboard ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 class DashboardApp:
     SRC_SERIAL = "serial"
     SRC_SIM = "simulation"
@@ -371,12 +377,12 @@ class DashboardApp:
         self._start_sim_worker()
         self._ui_tick()
 
-    # ──────── UI construction ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא UI construction ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _build_ui(self) -> None:
         frame = ttk.Frame(self.root, padding=8)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # ── connection bar ──
+        # ΓפאΓפא connection bar ΓפאΓפא
         conn = ttk.LabelFrame(frame, text="Data Source", padding=6)
         conn.pack(fill=tk.X)
 
@@ -397,7 +403,7 @@ class DashboardApp:
         self.conn_status_lbl = ttk.Label(conn, text="Disconnected", foreground="gray")
         self.conn_status_lbl.grid(row=0, column=6, padx=8)
 
-        # ── simulation controls (only active in sim mode) ──
+        # ΓפאΓפא simulation controls (only active in sim mode) ΓפאΓפא
         sim_ctrl = ttk.LabelFrame(frame, text="Simulation Controls", padding=6)
         sim_ctrl.pack(fill=tk.X, pady=(6, 0))
 
@@ -415,11 +421,24 @@ class DashboardApp:
         ttk.Button(sim_ctrl, text="Disturb L", command=lambda: self._kick(-0.07)).grid(row=0, column=5, padx=4)
         ttk.Button(sim_ctrl, text="Disturb R", command=lambda: self._kick(+0.07)).grid(row=0, column=6, padx=4)
         ttk.Button(sim_ctrl, text="Reset Home", command=self.sim.reset_homing).grid(row=0, column=7, padx=4)
+
+        ttk.Separator(sim_ctrl, orient="vertical").grid(row=0, column=8, sticky="ns", padx=6)
+
+        btn_left = ttk.Button(sim_ctrl, text="◄ LEFT")
+        btn_left.grid(row=0, column=9, padx=4)
+        btn_left.bind("<ButtonPress>",   lambda e: self._jog_start(-1))
+        btn_left.bind("<ButtonRelease>", lambda e: self._jog_stop())
+
+        btn_right = ttk.Button(sim_ctrl, text="RIGHT ►")
+        btn_right.grid(row=0, column=10, padx=4)
+        btn_right.bind("<ButtonPress>",   lambda e: self._jog_start(+1))
+        btn_right.bind("<ButtonRelease>", lambda e: self._jog_stop())
+
         sim_ctrl.columnconfigure(2, weight=1)
         sim_ctrl.columnconfigure(4, weight=1)
         self.sim_ctrl_frame = sim_ctrl
 
-        # ── live state ──
+        # ΓפאΓפא live state ΓפאΓפא
         state = ttk.LabelFrame(frame, text="Live State", padding=6)
         state.pack(fill=tk.X, pady=(6, 0))
 
@@ -433,21 +452,21 @@ class DashboardApp:
             lbl.grid(row=r, column=c * 2 + 1, sticky="w", padx=(2, 10))
             self.state_labels[key] = lbl
 
-        # ── machine view ──
+        # ΓפאΓפא machine view ΓפאΓפא
         machine_box = ttk.LabelFrame(frame, text="Machine View", padding=6)
         machine_box.pack(fill=tk.X, pady=(6, 0))
 
         self.machine_canvas = tk.Canvas(machine_box, height=120, background="#181c24", highlightthickness=0)
         self.machine_canvas.pack(fill=tk.X)
 
-        # ── homing steps progress ──
+        # ΓפאΓפא homing steps progress ΓפאΓפא
         steps_box = ttk.LabelFrame(frame, text="Homing Steps", padding=6)
         steps_box.pack(fill=tk.X, pady=(6, 0))
 
         self.step_labels: dict[int, ttk.Label] = {}
         step_names = [
-            (0, "1. RIGHT→LIMIT", "Go right to limit switch"),
-            (1, "2. LEFT→CENTER", "Go left until center sensor ON"),
+            (0, "1. RIGHTΓזעLIMIT", "Go right to limit switch"),
+            (1, "2. LEFTΓזעCENTER", "Go left until center sensor ON"),
             (2, "3. SLOW RIGHT", "Reverse right slowly, re-enter center"),
             (3, "4. DONE", "Centered!"),
         ]
@@ -460,14 +479,14 @@ class DashboardApp:
                 row=1, column=i, padx=4, sticky="w")
         steps_box.columnconfigure((0, 1, 2, 3), weight=1)
 
-        # ── telemetry graph ──
+        # ΓפאΓפא telemetry graph ΓפאΓפא
         plot_box = ttk.LabelFrame(frame, text="Telemetry Graph", padding=6)
         plot_box.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
 
         self.canvas = tk.Canvas(plot_box, height=160, background="#101216", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-    # ──────── port helpers ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא port helpers ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _refresh_ports(self) -> None:
         ports = available_ports()
         self.port_combo["values"] = ports
@@ -501,7 +520,7 @@ class DashboardApp:
             except Exception:
                 pass
 
-    # ──────── sim callbacks ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא sim callbacks ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _on_mode_change(self) -> None:
         self.sim.st.mode_seek = self.mode_seek_var.get()
 
@@ -514,7 +533,13 @@ class DashboardApp:
     def _kick(self, delta: float) -> None:
         self.sim.st.position = max(0.0, min(1.0, self.sim.st.position + delta))
 
-    # ──────── workers ────────
+    def _jog_start(self, direction: int) -> None:
+        self.sim.manual_override = direction
+
+    def _jog_stop(self) -> None:
+        self.sim.manual_override = 0
+
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא workers ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _start_sim_worker(self) -> None:
         def worker() -> None:
             dt = 0.01
@@ -523,7 +548,7 @@ class DashboardApp:
                 time.sleep(dt)
         threading.Thread(target=worker, daemon=True).start()
 
-    # ──────── UI tick ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא UI tick ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _ui_tick(self) -> None:
         if self.source == self.SRC_SERIAL and self.serial_reader:
             self._update_from_serial()
@@ -596,7 +621,7 @@ class DashboardApp:
         self._vis_hs = int(st.homing_state)
         self._vis_analog_v = st.analog_v
 
-    # ──────── machine view ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא machine view ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _draw_machine(self) -> None:
         c = self.machine_canvas
         w = max(10, c.winfo_width())
@@ -608,10 +633,10 @@ class DashboardApp:
         rx0, rx1 = pad + 20, w - pad - 20
         rail_w = rx1 - rx0
 
-        # ── rail ──
+        # ΓפאΓפא rail ΓפאΓפא
         c.create_line(rx0, rail_y, rx1, rail_y, fill="#555", width=3)
 
-        # ── center zone ──
+        # ΓפאΓפא center zone ΓפאΓפא
         cx = rx0 + rail_w * 0.5
         zone_half = rail_w * 0.03
         cen_color = "#00ff88" if self._vis_center else "#2a3a30"
@@ -619,7 +644,7 @@ class DashboardApp:
                            fill=cen_color, outline="#00cc66", width=2)
         c.create_text(cx, rail_y - 28, text="CENTER", fill="#00cc66", font=("Consolas", 8))
 
-        # ── limit switches ──
+        # ΓפאΓפא limit switches ΓפאΓפא
         lim_size = 10
         # left limit
         ll_color = "#ff4444" if self._vis_lim_l else "#3a2a2a"
@@ -633,7 +658,7 @@ class DashboardApp:
                            fill=lr_color, outline="#cc3333", width=2)
         c.create_text(rx1, rail_y - 20, text="LIM-R", fill="#cc3333", font=("Consolas", 7))
 
-        # ── motor block ──
+        # ΓפאΓפא motor block ΓפאΓפא
         pos = max(0.0, min(1.0, self._vis_position))
         mx = rx0 + rail_w * pos
         bw, bh = 20, 28
@@ -651,7 +676,7 @@ class DashboardApp:
                            fill=motor_color, outline="#e0e0e0", width=2)
         c.create_text(mx, rail_y - 4, text="M", fill="white", font=("Consolas", 12, "bold"))
 
-        # ── direction arrow ──
+        # ΓפאΓפא direction arrow ΓפאΓפא
         if self._vis_dir != 0:
             arrow_len = 18 + self._vis_pwm / 15
             ax = mx + (arrow_len if self._vis_dir > 0 else -arrow_len)
@@ -662,7 +687,7 @@ class DashboardApp:
         else:
             c.create_text(mx, rail_y + bh + 12, text="STOP", fill="#888", font=("Consolas", 8))
 
-        # ── analog voltage bar ──
+        # ΓפאΓפא analog voltage bar ΓפאΓפא
         bar_y = 12
         bar_h = 8
         bar_x0 = rx0
@@ -686,7 +711,7 @@ class DashboardApp:
             else:
                 lbl.config(background="#2a2e38", foreground="#666")        # pending
 
-    # ──────── telemetry plot ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא telemetry plot ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _draw_plot(self) -> None:
         w = max(10, self.canvas.winfo_width())
         h = max(10, self.canvas.winfo_height())
@@ -729,14 +754,14 @@ class DashboardApp:
         legend = "Voltage: cyan | PWM: orange | Target: purple"
         self.canvas.create_text(x1 - 8, y0 + 8, text=legend, fill="#98a3b3", anchor="ne")
 
-    # ──────── cleanup ────────
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא cleanup ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def close(self) -> None:
         self.running = False
         if self.serial_reader:
             self.serial_reader.stop()
 
 
-# ───────────────────── main ─────────────────────
+# ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא main ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 def main() -> None:
     root = tk.Tk()
     app = DashboardApp(root)
