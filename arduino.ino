@@ -36,6 +36,20 @@ const int PWM_MAX = 200;
 // Mapping: err>0 => move RIGHT?
 bool ERR_POS_MOVE_RIGHT = true;
 
+// ======================= JOG (serial override) =======================
+// Send 'R' = jog right, 'L' = jog left, 'S' = stop jog
+const int JOG_PWM = 60;
+int8_t g_jog = 0;   // -1 left, 0 off, +1 right
+
+void processSerialCommands() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if      (c == 'R') g_jog = +1;
+    else if (c == 'L') g_jog = -1;
+    else if (c == 'S') g_jog =  0;
+  }
+}
+
 // ======================= HOMING (SEEK) =======================
 // Fast search speed
 const int SEEK_PWM_FAST = 18;
@@ -298,7 +312,18 @@ void setup() {
 }
 
 void loop() {
-  if (seekModeEnabled()) {
+  processSerialCommands();
+
+  if (g_jog != 0) {
+    // jog override: move motor directly, ignore seek/analog
+    if (g_jog > 0) {
+      if (!limitRightActive()) motorRight(JOG_PWM);
+      else motorStop();
+    } else {
+      if (!limitLeftActive()) motorLeft(JOG_PWM);
+      else motorStop();
+    }
+  } else if (seekModeEnabled()) {
     // homing mode
     if (homingState == SEEK_DONE) motorStop();
     else homingStep();

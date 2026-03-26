@@ -94,6 +94,14 @@ class SerialReader:
             self.data.updated = False
             return d
 
+    def send(self, data: bytes) -> None:
+        """Send bytes to Arduino (best-effort)."""
+        try:
+            if self._ser and self._ser.is_open:
+                self._ser.write(data)
+        except Exception:
+            pass
+
     # ΓפאΓפא background loop ΓפאΓפא
     def _run(self) -> None:
         try:
@@ -534,10 +542,16 @@ class DashboardApp:
         self.sim.st.position = max(0.0, min(1.0, self.sim.st.position + delta))
 
     def _jog_start(self, direction: int) -> None:
-        self.sim.manual_override = direction
+        if self.source == self.SRC_SERIAL and self.serial_reader:
+            self.serial_reader.send(b'R' if direction > 0 else b'L')
+        else:
+            self.sim.manual_override = direction
 
     def _jog_stop(self) -> None:
-        self.sim.manual_override = 0
+        if self.source == self.SRC_SERIAL and self.serial_reader:
+            self.serial_reader.send(b'S')
+        else:
+            self.sim.manual_override = 0
 
     # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא workers ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     def _start_sim_worker(self) -> None:
