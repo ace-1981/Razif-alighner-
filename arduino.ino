@@ -105,20 +105,32 @@ void processSerialCommands() {
 const int LIMIT_BACKOFF_PWM = 55;
 
 void checkLimitBackoff() {
-  bool anyLimit = limitLeftActive() || limitRightActive();
-  if (!anyLimit) return;
+  bool limL = limitLeftActive();
+  bool limR = limitRightActive();
+  if (!limL && !limR) return;
 
-  // Remember which way we were going, then reverse
   int wasDir = g_dir;  // -1 left, 0 stop, +1 right
   motorStop();
   delay(20);
 
-  if (wasDir >= 0) {
-    // Was going right (or stopped) -> reverse left
-    motorLeft(LIMIT_BACKOFF_PWM);
+  // Decide escape direction:
+  // If we know which limit is hit, run AWAY from it.
+  // If both limits (error) or motor was stopped, use limit info.
+  int escapeDir;
+  if (limL && !limR) {
+    escapeDir = +1;  // left limit -> escape right
+  } else if (limR && !limL) {
+    escapeDir = -1;  // right limit -> escape left
+  } else if (wasDir != 0) {
+    escapeDir = -wasDir;  // reverse previous direction
   } else {
-    // Was going left -> reverse right
+    escapeDir = +1;  // fallback: escape right
+  }
+
+  if (escapeDir > 0) {
     motorRight(LIMIT_BACKOFF_PWM);
+  } else {
+    motorLeft(LIMIT_BACKOFF_PWM);
   }
 
   // Keep reversing until ALL limits clear
