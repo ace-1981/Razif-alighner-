@@ -36,6 +36,55 @@ const int PWM_MAX = 200;
 // Mapping: err>0 => move RIGHT?
 bool ERR_POS_MOVE_RIGHT = true;
 
+// ======================= MOTOR TRACKING =======================
+int g_dir = 0;  // -1 left, 0 stop, +1 right
+int g_pwm = 0;  // 0..255
+
+static inline void motorStop() {
+  g_dir = 0; g_pwm = 0;
+  analogWrite(PIN_PWM_RIGHT, 0);
+  analogWrite(PIN_PWM_LEFT,  0);
+}
+static inline void motorRight(int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  g_dir = +1; g_pwm = pwm;
+  analogWrite(PIN_PWM_RIGHT, pwm);
+  analogWrite(PIN_PWM_LEFT,  0);
+}
+static inline void motorLeft(int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  g_dir = -1; g_pwm = pwm;
+  analogWrite(PIN_PWM_RIGHT, 0);
+  analogWrite(PIN_PWM_LEFT,  pwm);
+}
+
+// Seek direction memory: true => right, false => left
+bool seekDirRight = true;
+
+// ======================= INPUT HELPERS =======================
+static inline bool isActiveDigital(uint8_t pin, bool activeHigh) {
+  int raw = digitalRead(pin);
+  return activeHigh ? (raw == HIGH) : (raw == LOW);
+}
+
+bool seekModeEnabled() {
+  return isActiveDigital(PIN_MODE_SEEK, MODE_SEEK_ACTIVE_HIGH);
+}
+
+bool centerSensorActive() {
+  return isActiveDigital(PIN_CENTER_SENSOR, CENTER_ACTIVE_HIGH);
+}
+
+// NC + INPUT_PULLUP: normal LOW, at limit HIGH => active HIGH
+bool limitLeftActive() {
+  int raw = digitalRead(PIN_LIMIT_LEFT);
+  return LIMITS_ARE_NC_PULLUP ? (raw == HIGH) : (raw == LOW);
+}
+bool limitRightActive() {
+  int raw = digitalRead(PIN_LIMIT_RIGHT);
+  return LIMITS_ARE_NC_PULLUP ? (raw == HIGH) : (raw == LOW);
+}
+
 // ======================= JOG (serial override) =======================
 // Send 'R' = jog right, 'L' = jog left, 'S' = stop jog
 const int JOG_PWM = 60;
@@ -104,54 +153,8 @@ enum HomingState : uint8_t {
 
 HomingState homingState = SEEK_FIND_CENTER_FAST;
 
-// Seek direction memory: true => right, false => left
-bool seekDirRight = true;
-
 // ======================= MOTOR TRACKING =======================
-int g_dir = 0;  // -1 left, 0 stop, +1 right
-int g_pwm = 0;  // 0..255
-
-static inline void motorStop() {
-  g_dir = 0; g_pwm = 0;
-  analogWrite(PIN_PWM_RIGHT, 0);
-  analogWrite(PIN_PWM_LEFT,  0);
-}
-static inline void motorRight(int pwm) {
-  pwm = constrain(pwm, 0, 255);
-  g_dir = +1; g_pwm = pwm;
-  analogWrite(PIN_PWM_RIGHT, pwm);
-  analogWrite(PIN_PWM_LEFT,  0);
-}
-static inline void motorLeft(int pwm) {
-  pwm = constrain(pwm, 0, 255);
-  g_dir = -1; g_pwm = pwm;
-  analogWrite(PIN_PWM_RIGHT, 0);
-  analogWrite(PIN_PWM_LEFT,  pwm);
-}
-
-// ======================= INPUT HELPERS =======================
-static inline bool isActiveDigital(uint8_t pin, bool activeHigh) {
-  int raw = digitalRead(pin);
-  return activeHigh ? (raw == HIGH) : (raw == LOW);
-}
-
-bool seekModeEnabled() {
-  return isActiveDigital(PIN_MODE_SEEK, MODE_SEEK_ACTIVE_HIGH);
-}
-
-bool centerSensorActive() {
-  return isActiveDigital(PIN_CENTER_SENSOR, CENTER_ACTIVE_HIGH);
-}
-
-// NC + INPUT_PULLUP: normal LOW, at limit HIGH => active HIGH
-bool limitLeftActive() {
-  int raw = digitalRead(PIN_LIMIT_LEFT);
-  return LIMITS_ARE_NC_PULLUP ? (raw == HIGH) : (raw == LOW);
-}
-bool limitRightActive() {
-  int raw = digitalRead(PIN_LIMIT_RIGHT);
-  return LIMITS_ARE_NC_PULLUP ? (raw == HIGH) : (raw == LOW);
-}
+// (g_dir, g_pwm, motorStop/Right/Left, seekDirRight, input helpers defined above)
 
 // ======================= ANALOG SENSOR =======================
 int readAnalogRawAvg(uint8_t n=10) {
