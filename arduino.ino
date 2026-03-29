@@ -51,36 +51,30 @@ void processSerialCommands() {
 }
 
 // ======================= LIMIT AUTO-BACKOFF =======================
-// When motor first touches a limit, back off automatically so it never stays stuck
-const int    LIMIT_BACKOFF_PWM = 55;
-const uint16_t LIMIT_BACKOFF_MS  = 150;
-
-bool prevLimLeft  = false;
-bool prevLimRight = false;
+// If any limit is active, immediately reverse until off - absolute safety
+const int LIMIT_BACKOFF_PWM = 55;
 
 void checkLimitBackoff() {
-  bool limL = limitLeftActive();
-  bool limR = limitRightActive();
-
-  if (limL && !prevLimLeft) {      // just hit left limit
+  // Left limit active -> must go right
+  if (limitLeftActive()) {
     motorStop();
     delay(20);
     motorRight(LIMIT_BACKOFF_PWM);
-    while (limitLeftActive()) { delay(5); }  // reverse until off limit
+    while (limitLeftActive()) { delay(5); }
     motorStop();
-    seekDirRight = true;   // flip homing direction -> go right now
+    seekDirRight = true;   // homing: go right from now
+    return;
   }
-  if (limR && !prevLimRight) {     // just hit right limit
+  // Right limit active -> must go left
+  if (limitRightActive()) {
     motorStop();
     delay(20);
     motorLeft(LIMIT_BACKOFF_PWM);
-    while (limitRightActive()) { delay(5); }  // reverse until off limit
+    while (limitRightActive()) { delay(5); }
     motorStop();
-    seekDirRight = false;  // flip homing direction -> go left now
+    seekDirRight = false;  // homing: go left from now
+    return;
   }
-
-  prevLimLeft  = limL;
-  prevLimRight = limR;
 }
 
 // ======================= HOMING (SEEK) =======================
