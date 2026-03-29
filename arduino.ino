@@ -51,30 +51,33 @@ void processSerialCommands() {
 }
 
 // ======================= LIMIT AUTO-BACKOFF =======================
-// If any limit is active, immediately reverse until off - absolute safety
+// If ANY limit is active, reverse current motor direction until limit clears.
+// This works regardless of wiring polarity.
 const int LIMIT_BACKOFF_PWM = 55;
 
 void checkLimitBackoff() {
-  // Left limit active -> must go right
-  if (limitLeftActive()) {
-    motorStop();
-    delay(20);
-    motorRight(LIMIT_BACKOFF_PWM);
-    while (limitLeftActive()) { delay(5); }
-    motorStop();
-    seekDirRight = true;   // homing: go right from now
-    return;
-  }
-  // Right limit active -> must go left
-  if (limitRightActive()) {
-    motorStop();
-    delay(20);
+  bool anyLimit = limitLeftActive() || limitRightActive();
+  if (!anyLimit) return;
+
+  // Remember which way we were going, then reverse
+  int wasDir = g_dir;  // -1 left, 0 stop, +1 right
+  motorStop();
+  delay(20);
+
+  if (wasDir >= 0) {
+    // Was going right (or stopped) -> reverse left
     motorLeft(LIMIT_BACKOFF_PWM);
-    while (limitRightActive()) { delay(5); }
-    motorStop();
-    seekDirRight = false;  // homing: go left from now
-    return;
+  } else {
+    // Was going left -> reverse right
+    motorRight(LIMIT_BACKOFF_PWM);
   }
+
+  // Keep reversing until ALL limits clear
+  while (limitLeftActive() || limitRightActive()) { delay(5); }
+  motorStop();
+
+  // Flip homing seek direction
+  seekDirRight = !seekDirRight;
 }
 
 // ======================= HOMING (SEEK) =======================
