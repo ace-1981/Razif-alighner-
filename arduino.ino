@@ -66,15 +66,17 @@ void checkLimitBackoff() {
     motorStop();
     delay(20);
     motorRight(LIMIT_BACKOFF_PWM);
-    delay(LIMIT_BACKOFF_MS);
+    while (limitLeftActive()) { delay(5); }  // reverse until off limit
     motorStop();
+    seekDirRight = true;   // flip homing direction -> go right now
   }
   if (limR && !prevLimRight) {     // just hit right limit
     motorStop();
     delay(20);
     motorLeft(LIMIT_BACKOFF_PWM);
-    delay(LIMIT_BACKOFF_MS);
+    while (limitRightActive()) { delay(5); }  // reverse until off limit
     motorStop();
+    seekDirRight = false;  // flip homing direction -> go left now
   }
 
   prevLimLeft  = limL;
@@ -174,12 +176,6 @@ void homingReset() {
   motorStop();
 }
 
-// Bounce direction at limits (works in all states where we move in seekDir direction)
-void updateSeekDirOnLimits() {
-  if (seekDirRight && limitRightActive()) { motorStop(); seekDirRight = false; delay(BOUNCE_DELAY_MS); }
-  if (!seekDirRight && limitLeftActive()) { motorStop(); seekDirRight = true;  delay(BOUNCE_DELAY_MS); }
-}
-
 void homingStep() {
   bool cen = centerSensorActive();
 
@@ -196,10 +192,7 @@ void homingStep() {
         return;
       }
 
-      // Bounce between limits while searching
-      updateSeekDirOnLimits();
-
-      // Move fast in seekDir
+      // Move fast in seekDir (limits handled by checkLimitBackoff)
       if (seekDirRight) {
         if (!limitRightActive()) motorRight(SEEK_PWM_FAST);
         else motorStop();
@@ -239,8 +232,7 @@ void homingStep() {
         return;
       }
 
-      // Safety bounce (in case center is close to limit)
-      updateSeekDirOnLimits();
+      // Safety (limits handled by checkLimitBackoff)
 
       if (seekDirRight) {
         if (!limitRightActive()) motorRight(SEEK_PWM_FINE);
