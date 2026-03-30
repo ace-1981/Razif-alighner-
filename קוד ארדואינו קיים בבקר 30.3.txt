@@ -1,4 +1,4 @@
-﻿#include <Arduino.h>
+#include <Arduino.h>
 
 // ======================= PINS =======================
 // IBT-2 / H-Bridge PWM

@@ -18,6 +18,9 @@ const uint8_t PIN_LIMIT_RIGHT = 12;    // Right limit (NC)
 // Analog edge/eye sensor
 const uint8_t PIN_ANALOG_SENSOR = A0;  // 0..5V after divider/adapter
 
+// Potentiometer for fine-tuning center setpoint
+const uint8_t PIN_POT_TRIM = A1;
+
 // Centered indicator LED
 const uint8_t PIN_LED_CENTERED = 9;    // HIGH when analog sensor is at center
 
@@ -29,19 +32,21 @@ const bool CENTER_ACTIVE_HIGH    = true;   // D3 active HIGH (adapter pulls HIGH
 const bool LIMITS_ARE_NC_PULLUP  = true;
 
 // ======================= ANALOG CONTROL =======================
-const float ANALOG_CENTER_V   = 2.00f;  // center setpoint
-const float ANALOG_DEADBAND_V = 0.08f;
-const float KP = 90.0f;
+const float ANALOG_CENTER_V   = 2.00f;  // A0 sensor center voltage (paper centered)
+const float POT_OFFSET_MAX    = 1.00f;  // A1 pot shifts setpoint ±1.00V from A0 center
+const float ANALOG_DEADBAND_V = 0.088f;
+const float KP = 40.0f;
 
-const int PWM_MIN = 30;
-const int PWM_MAX = 100;
+const int PWM_MIN = 20;
+const int PWM_MAX = 55;
 
 // No-paper detection: if voltage outside this range, assume no paper -> stop
 const float ANALOG_VALID_LOW  = 0.3f;
-const float ANALOG_VALID_HIGH = 2.8f;
+const float ANALOG_VALID_HIGH = 3.5f;
+const int   NO_PAPER_DEBOUNCE = 15;  // consecutive out-of-range reads before stopping
 
 // Mapping: err>0 => move RIGHT?
-bool ERR_POS_MOVE_RIGHT = true;
+bool ERR_POS_MOVE_RIGHT = false;
 
 // ======================= MOTOR TRACKING =======================
 int g_dir = 0;  // -1 left, 0 stop, +1 right
@@ -291,6 +296,8 @@ void checkMotorSafetyTimeout() {
       lastMotorDir = g_dir;
     } else if (millis() - motorRunStartMs > maxRunMs) {
       motorStop();  // exceeded max travel time - limit switch may have failed
+      lastMotorDir = 0;           // reset so motor can restart next cycle
+      motorRunStartMs = millis(); // fresh timer
     }
   } else {
     lastMotorDir = 0;
@@ -299,17 +306,29 @@ void checkMotorSafetyTimeout() {
 }
 
 // ======================= ANALOG CONTROL =======================
+float readPotOffset() {
+  int potRaw = analogRead(PIN_POT_TRIM);
+  return POT_OFFSET_MAX * (2.0f * potRaw / 1023.0f - 1.0f);
+}
+
+static int noPaperCount = 0;  // debounce counter for no-paper detection
+
 void analogControlStep() {
   float v = rawToV(readAnalogRawAvg(10));
 
-  // No paper: voltage outside valid range -> stop motor, LED off
+  // No paper: require multiple consecutive out-of-range readings (debounce)
   if (v < ANALOG_VALID_LOW || v > ANALOG_VALID_HIGH) {
-    motorStop();
-    digitalWrite(PIN_LED_CENTERED, LOW);
+    noPaperCount++;
+    if (noPaperCount >= NO_PAPER_DEBOUNCE) {
+      motorStop();
+      digitalWrite(PIN_LED_CENTERED, LOW);
+    }
     return;
   }
+  noPaperCount = 0;  // valid reading -> reset debounce
 
-  float err = v - ANALOG_CENTER_V;
+  float setpoint = ANALOG_CENTER_V + readPotOffset();
+  float err = v - setpoint;
 
   if (fabs(err) <= ANALOG_DEADBAND_V) {
     motorStop();
@@ -370,6 +389,7 @@ void telemetryLine() {
   Serial.print(" tR=");    Serial.print(calTravelRightMs);
   Serial.print(" tL=");    Serial.print(calTravelLeftMs);
   Serial.print(" tAvg=");  Serial.print(calTravelMs);
+  Serial.print(" pot=");   Serial.print(readPotOffset(), 3);
   Serial.println();
 }
 
@@ -432,8 +452,7 @@ void loop() {
     if (homingState == SEEK_DONE) motorStop();
     else homingStep();
   } else {
-    // normal analog mode - limit backoff active for safety
-    checkLimitBackoff();
+    // normal analog mode - limits handled inside analogControlStep
     if (wasSeekMode) homingReset();
     wasSeekMode = false;
     analogControlStep();
