@@ -1,4 +1,4 @@
-﻿#include <Arduino.h>
+#include <Arduino.h>
 
 // ======================= PINS =======================
 // IBT-2 / H-Bridge PWM
@@ -36,6 +36,33 @@ const int PWM_MAX = 200;
 // Mapping: err>0 => move RIGHT?
 bool ERR_POS_MOVE_RIGHT = true;
 
+// ======================= HOMING (SEEK) =======================
+// Fast search speed
+const int SEEK_PWM_FAST = 18;
+// Backoff speed (slow)
+const int SEEK_PWM_SLOW = 10;
+// Fine approach speed (very slow)
+const int SEEK_PWM_FINE = 12;
+
+const uint16_t BOUNCE_DELAY_MS = 80;
+
+// Homing states:
+// 1) Find center (fast) until CENTER becomes ON
+// 2) Backoff (slow) until CENTER becomes OFF
+// 3) Approach (fine) until CENTER becomes ON again
+// 4) Done
+enum HomingState : uint8_t {
+  SEEK_FIND_CENTER_FAST = 0,
+  SEEK_BACKOFF_UNTIL_OFF = 1,
+  SEEK_APPROACH_FINE = 2,
+  SEEK_DONE = 3
+};
+
+HomingState homingState = SEEK_FIND_CENTER_FAST;
+
+// Seek direction memory: true => right, false => left
+bool seekDirRight = true;
+
 // ======================= MOTOR TRACKING =======================
 int g_dir = 0;  // -1 left, 0 stop, +1 right
 int g_pwm = 0;  // 0..255
@@ -57,10 +84,6 @@ static inline void motorLeft(int pwm) {
   analogWrite(PIN_PWM_RIGHT, 0);
   analogWrite(PIN_PWM_LEFT,  pwm);
 }
-
-// Seek direction memory: true => right, false => left
-// DEFAULT: start LEFT (towards center sensor - confirmed)
-bool seekDirRight = false;
 
 // ======================= INPUT HELPERS =======================
 static inline bool isActiveDigital(uint8_t pin, bool activeHigh) {
@@ -86,89 +109,6 @@ bool limitRightActive() {
   return LIMITS_ARE_NC_PULLUP ? (raw == HIGH) : (raw == LOW);
 }
 
-// ======================= JOG (serial override) =======================
-// Send 'R' = jog right, 'L' = jog left, 'S' = stop jog
-const int JOG_PWM = 60;
-int8_t g_jog = 0;   // -1 left, 0 off, +1 right
-
-void processSerialCommands() {
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if      (c == 'R') g_jog = +1;
-    else if (c == 'L') g_jog = -1;
-    else if (c == 'S') g_jog =  0;
-  }
-}
-
-// ======================= LIMIT AUTO-BACKOFF =======================
-// If ANY limit is active, reverse current motor direction until limit clears.
-// This works regardless of wiring polarity.
-const int LIMIT_BACKOFF_PWM = 55;
-
-void checkLimitBackoff() {
-  bool limL = limitLeftActive();
-  bool limR = limitRightActive();
-  if (!limL && !limR) return;
-
-  int wasDir = g_dir;  // -1 left, 0 stop, +1 right
-  motorStop();
-  delay(20);
-
-  // Decide escape direction:
-  // If we know which limit is hit, run AWAY from it.
-  // If both limits (error) or motor was stopped, use limit info.
-  int escapeDir;
-  if (limL && !limR) {
-    escapeDir = +1;  // left limit -> escape right
-  } else if (limR && !limL) {
-    escapeDir = -1;  // right limit -> escape left
-  } else if (wasDir != 0) {
-    escapeDir = -wasDir;  // reverse previous direction
-  } else {
-    escapeDir = +1;  // fallback: escape right
-  }
-
-  if (escapeDir > 0) {
-    motorRight(LIMIT_BACKOFF_PWM);
-  } else {
-    motorLeft(LIMIT_BACKOFF_PWM);
-  }
-
-  // Keep reversing until ALL limits clear
-  while (limitLeftActive() || limitRightActive()) { delay(5); }
-  motorStop();
-
-  // Flip homing seek direction
-  seekDirRight = !seekDirRight;
-}
-
-// ======================= HOMING (SEEK) =======================
-// Fast search speed
-const int SEEK_PWM_FAST = 18;
-// Backoff speed (slow)
-const int SEEK_PWM_SLOW = 10;
-// Fine approach speed (very slow)
-const int SEEK_PWM_FINE = 12;
-
-const uint16_t BOUNCE_DELAY_MS = 80;
-
-// Homing states:
-// 1) Find center (fast) until CENTER becomes ON
-// 2) Backoff (slow) until CENTER becomes OFF
-// 3) Approach (fine) until CENTER becomes ON again
-// 4) Done
-enum HomingState : uint8_t {
-  SEEK_FIND_CENTER_FAST = 0,
-  SEEK_BACKOFF_UNTIL_OFF = 1,
-  SEEK_APPROACH_FINE = 2,
-  SEEK_DONE = 3
-};
-
-HomingState homingState = SEEK_FIND_CENTER_FAST;
-
-// ======================= MOTOR TRACKING =======================
-// (g_dir, g_pwm, motorStop/Right/Left, seekDirRight, input helpers defined above)
-
 // ======================= ANALOG SENSOR =======================
 int readAnalogRawAvg(uint8_t n=10) {
   long s = 0;
@@ -185,8 +125,14 @@ float rawToV(int raw) {
 // ======================= HOMING CONTROL =======================
 void homingReset() {
   homingState = SEEK_FIND_CENTER_FAST;
-  seekDirRight = false;      // start moving LEFT (towards center sensor)
+  seekDirRight = true;       // start moving right first
   motorStop();
+}
+
+// Bounce direction at limits (works in all states where we move in seekDir direction)
+void updateSeekDirOnLimits() {
+  if (seekDirRight && limitRightActive()) { motorStop(); seekDirRight = false; delay(BOUNCE_DELAY_MS); }
+  if (!seekDirRight && limitLeftActive()) { motorStop(); seekDirRight = true;  delay(BOUNCE_DELAY_MS); }
 }
 
 void homingStep() {
@@ -205,7 +151,10 @@ void homingStep() {
         return;
       }
 
-      // Move fast in seekDir (limits handled by checkLimitBackoff)
+      // Bounce between limits while searching
+      updateSeekDirOnLimits();
+
+      // Move fast in seekDir
       if (seekDirRight) {
         if (!limitRightActive()) motorRight(SEEK_PWM_FAST);
         else motorStop();
@@ -245,7 +194,8 @@ void homingStep() {
         return;
       }
 
-      // Safety (limits handled by checkLimitBackoff)
+      // Safety bounce (in case center is close to limit)
+      updateSeekDirOnLimits();
 
       if (seekDirRight) {
         if (!limitRightActive()) motorRight(SEEK_PWM_FINE);
@@ -345,44 +295,17 @@ void setup() {
   motorStop();
   homingReset();
   Serial.println("=== START align_clean_telemetry ===");
-  
-  // Startup diagnostics
-  Serial.print("DIAG: rawLL="); Serial.print(digitalRead(PIN_LIMIT_LEFT));
-  Serial.print(" rawLR="); Serial.print(digitalRead(PIN_LIMIT_RIGHT));
-  Serial.print(" limL="); Serial.print(limitLeftActive() ? 1 : 0);
-  Serial.print(" limR="); Serial.print(limitRightActive() ? 1 : 0);
-  Serial.println();
 }
 
 void loop() {
-  processSerialCommands();
-  checkLimitBackoff();
-
-  static bool wasSeekMode = false;
-  bool isSeek = seekModeEnabled();
-
-  if (g_jog != 0) {
-    // jog override: move motor directly, ignore seek/analog
-    if (g_jog > 0) {
-      if (!limitRightActive()) motorRight(JOG_PWM);
-      else motorStop();
-    } else {
-      if (!limitLeftActive()) motorLeft(JOG_PWM);
-      else motorStop();
-    }
-    wasSeekMode = false;
-  } else if (isSeek) {
-    // On entering seek mode: always reset so we start LEFT
-    if (!wasSeekMode) {
-      homingReset();
-      wasSeekMode = true;
-    }
+  if (seekModeEnabled()) {
+    // homing mode
     if (homingState == SEEK_DONE) motorStop();
     else homingStep();
   } else {
     // normal analog mode
-    if (wasSeekMode) homingReset();
-    wasSeekMode = false;
+    // reset homing so next seek starts clean
+    if (homingState != SEEK_FIND_CENTER_FAST) homingReset();
     analogControlStep();
   }
 
