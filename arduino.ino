@@ -59,8 +59,8 @@ static inline void motorLeft(int pwm) {
 }
 
 // Seek direction memory: true => right, false => left
-// DEFAULT: start LEFT (towards center sensor per user setup)
-bool seekDirRight = false;
+// DEFAULT: start RIGHT (towards center sensor - confirmed by user)
+bool seekDirRight = true;
 
 // ======================= INPUT HELPERS =======================
 static inline bool isActiveDigital(uint8_t pin, bool activeHigh) {
@@ -185,7 +185,7 @@ float rawToV(int raw) {
 // ======================= HOMING CONTROL =======================
 void homingReset() {
   homingState = SEEK_FIND_CENTER_FAST;
-  seekDirRight = false;      // start moving LEFT (towards center sensor)
+  seekDirRight = true;       // start moving RIGHT (towards center sensor)
   motorStop();
 }
 
