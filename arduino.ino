@@ -351,6 +351,9 @@ void loop() {
   processSerialCommands();
   checkLimitBackoff();
 
+  static bool wasSeekMode = false;
+  bool isSeek = seekModeEnabled();
+
   if (g_jog != 0) {
     // jog override: move motor directly, ignore seek/analog
     if (g_jog > 0) {
@@ -360,14 +363,19 @@ void loop() {
       if (!limitLeftActive()) motorLeft(JOG_PWM);
       else motorStop();
     }
-  } else if (seekModeEnabled()) {
-    // homing mode
+    wasSeekMode = false;
+  } else if (isSeek) {
+    // On entering seek mode: always reset so we start LEFT
+    if (!wasSeekMode) {
+      homingReset();
+      wasSeekMode = true;
+    }
     if (homingState == SEEK_DONE) motorStop();
     else homingStep();
   } else {
     // normal analog mode
-    // reset homing so next seek starts clean
-    if (homingState != SEEK_FIND_CENTER_FAST) homingReset();
+    if (wasSeekMode) homingReset();
+    wasSeekMode = false;
     analogControlStep();
   }
 
