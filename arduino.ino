@@ -21,7 +21,7 @@ const uint8_t PIN_ANALOG_SENSOR = A0;  // 0..5V after divider/adapter
 // ======================= POLARITY =======================
 // Adjust to match your adapter logic
 const bool MODE_SEEK_ACTIVE_HIGH = true;   // D2 HIGH => seek mode enabled
-const bool CENTER_ACTIVE_HIGH    = false;  // D3 active LOW (your current wiring)
+const bool CENTER_ACTIVE_HIGH    = true;   // D3 active HIGH (adapter pulls HIGH when detecting)
 // NC + INPUT_PULLUP: normal LOW, at limit HIGH
 const bool LIMITS_ARE_NC_PULLUP  = true;
 
@@ -137,34 +137,38 @@ void checkLimitBackoff() {
   // Keep reversing until ALL limits clear
   while (limitLeftActive() || limitRightActive()) { delay(5); }
   motorStop();
-
-  // Flip homing seek direction
-  seekDirRight = !seekDirRight;
 }
 
-// ======================= HOMING (SEEK) =======================
-// Fast search speed
-const int SEEK_PWM_FAST = 22;
-// Backoff speed (slow)
-const int SEEK_PWM_SLOW = 12;
-// Fine approach speed (very slow)
-const int SEEK_PWM_FINE = 15;
-
-const uint16_t BOUNCE_DELAY_MS = 80;
+// ======================= HOMING (TIMING-BASED) =======================
+// Calibration speed - must be enough to overcome motor friction
+const int CAL_PWM = 65;
+const int SETTLE_DELAY_MS = 200;     // pause at limits during calibration
+const float SAFETY_MARGIN = 1.15f;   // 15% extra on max travel time
 
 // Homing states:
-// 1) Find center (fast) until CENTER becomes ON
-// 2) Backoff (slow) until CENTER becomes OFF
-// 3) Approach (fine) until CENTER becomes ON again
+// 1) Move left until left limit
+// 2) Move right until right limit (measure travel time)
+// 3) Move left for half the travel time (center)
 // 4) Done
 enum HomingState : uint8_t {
-  SEEK_FIND_CENTER_FAST = 0,
-  SEEK_BACKOFF_UNTIL_OFF = 1,
-  SEEK_APPROACH_FINE = 2,
+  CAL_FIND_LEFT_LIMIT = 0,
+  CAL_FIND_RIGHT_LIMIT = 1,
+  CAL_GO_TO_CENTER = 2,
   SEEK_DONE = 3
 };
 
-HomingState homingState = SEEK_FIND_CENTER_FAST;
+HomingState homingState = CAL_FIND_LEFT_LIMIT;
+
+// Calibration data
+unsigned long calStartMs = 0;        // timer for current phase
+unsigned long calTravelMs = 0;       // measured full travel time (limit to limit)
+unsigned long calHalfTravelMs = 0;   // half = center
+unsigned long maxRunMs = 0;          // safety: max allowed motor run per direction
+bool calibrated = false;
+
+// Motor runtime safety
+unsigned long motorRunStartMs = 0;
+int lastMotorDir = 0;
 
 // ======================= MOTOR TRACKING =======================
 // (g_dir, g_pwm, motorStop/Right/Left, seekDirRight, input helpers defined above)
@@ -182,86 +186,58 @@ float rawToV(int raw) {
   return (raw * 5.0f) / 1023.0f;
 }
 
-// ======================= HOMING CONTROL =======================
+// ======================= HOMING CONTROL (TIMING) =======================
 void homingReset() {
-  homingState = SEEK_FIND_CENTER_FAST;
-  seekDirRight = false;      // start moving LEFT (towards center sensor)
+  homingState = CAL_FIND_LEFT_LIMIT;
+  calStartMs = 0;
   motorStop();
 }
 
 void homingStep() {
-  bool cen = centerSensorActive();
-
-  // Safety: impossible that both limits are active -> stop
+  // Safety: both limits active = error
   if (limitLeftActive() && limitRightActive()) { motorStop(); return; }
 
   switch (homingState) {
 
-    case SEEK_FIND_CENTER_FAST: {
-      // If center is ON -> stop, go to backoff phase
-      if (cen) {
+    case CAL_FIND_LEFT_LIMIT: {
+      // Move left until left limit
+      if (limitLeftActive()) {
         motorStop();
-        homingState = SEEK_BACKOFF_UNTIL_OFF;
+        delay(SETTLE_DELAY_MS);
+        calStartMs = millis();   // start timing the rightward trip
+        homingState = CAL_FIND_RIGHT_LIMIT;
         return;
       }
-
-      // Move fast in seekDir; on limit -> flip direction and continue
-      if (seekDirRight) {
-        if (!limitRightActive()) {
-          motorRight(SEEK_PWM_FAST);
-        } else {
-          motorStop();
-          seekDirRight = false;  // hit right limit -> go left
-        }
-      } else {
-        if (!limitLeftActive()) {
-          motorLeft(SEEK_PWM_FAST);
-        } else {
-          motorStop();
-          seekDirRight = true;   // hit left limit -> go right
-        }
-      }
+      motorLeft(CAL_PWM);
       return;
     }
 
-    case SEEK_BACKOFF_UNTIL_OFF: {
-      // Move opposite direction SLOW until center becomes OFF
-      if (!cen) {
+    case CAL_FIND_RIGHT_LIMIT: {
+      // Move right, measuring time until right limit
+      if (limitRightActive()) {
+        calTravelMs = millis() - calStartMs;
+        calHalfTravelMs = calTravelMs / 2;
+        maxRunMs = (unsigned long)(calTravelMs * SAFETY_MARGIN);
+        calibrated = true;
         motorStop();
-        homingState = SEEK_APPROACH_FINE;
+        delay(SETTLE_DELAY_MS);
+        calStartMs = millis();   // start timing the center-bound trip
+        homingState = CAL_GO_TO_CENTER;
         return;
       }
-
-      // backoff opposite seekDir
-      if (seekDirRight) { // seekDir was right => backoff left
-        if (!limitLeftActive()) motorLeft(SEEK_PWM_SLOW);
-        else if (!limitRightActive()) motorRight(SEEK_PWM_SLOW);
-        else motorStop();
-      } else {            // seekDir was left => backoff right
-        if (!limitRightActive()) motorRight(SEEK_PWM_SLOW);
-        else if (!limitLeftActive()) motorLeft(SEEK_PWM_SLOW);
-        else motorStop();
-      }
+      motorRight(CAL_PWM);
       return;
     }
 
-    case SEEK_APPROACH_FINE: {
-      // Now approach again VERY SLOW in seekDir until center becomes ON
-      if (cen) {
+    case CAL_GO_TO_CENTER: {
+      // Move left for half the measured travel time
+      unsigned long elapsed = millis() - calStartMs;
+      if (elapsed >= calHalfTravelMs) {
         motorStop();
         homingState = SEEK_DONE;
         return;
       }
-
-      // Safety (limits handled by checkLimitBackoff)
-
-      if (seekDirRight) {
-        if (!limitRightActive()) motorRight(SEEK_PWM_FINE);
-        else motorStop();
-      } else {
-        if (!limitLeftActive()) motorLeft(SEEK_PWM_FINE);
-        else motorStop();
-      }
+      motorLeft(CAL_PWM);
       return;
     }
 
@@ -269,6 +245,25 @@ void homingStep() {
     default:
       motorStop();
       return;
+  }
+}
+
+// ======================= MOTOR SAFETY TIMEOUT =======================
+void checkMotorSafetyTimeout() {
+  if (!calibrated || maxRunMs == 0) return;
+  // Don't limit during active calibration
+  if (seekModeEnabled() && homingState != SEEK_DONE) return;
+
+  if (g_dir != 0) {
+    if (g_dir != lastMotorDir) {
+      motorRunStartMs = millis();
+      lastMotorDir = g_dir;
+    } else if (millis() - motorRunStartMs > maxRunMs) {
+      motorStop();  // exceeded max travel time - limit switch may have failed
+    }
+  } else {
+    lastMotorDir = 0;
+    motorRunStartMs = millis();
   }
 }
 
@@ -329,7 +324,8 @@ void telemetryLine() {
   Serial.print(" pwm=");   Serial.print(g_pwm);
 
   Serial.print(" hs=");    Serial.print((int)homingState);
-  Serial.print(" seekDir="); Serial.print(seekDirRight ? 1 : 0); // 1=right,0=left
+  Serial.print(" cal=");   Serial.print(calibrated ? 1 : 0);
+  Serial.print(" trvMs="); Serial.print(calTravelMs);
   Serial.println();
 }
 
@@ -345,7 +341,7 @@ void setup() {
   pinMode(PIN_PWM_LEFT,  OUTPUT);
 
   pinMode(PIN_MODE_SEEK,     INPUT_PULLUP);
-  pinMode(PIN_CENTER_SENSOR, INPUT_PULLUP);
+  pinMode(PIN_CENTER_SENSOR, INPUT);        // no pullup - let adapter drive D3
 
   pinMode(PIN_LIMIT_LEFT,  INPUT_PULLUP);
   pinMode(PIN_LIMIT_RIGHT, INPUT_PULLUP);
@@ -395,6 +391,8 @@ void loop() {
     wasSeekMode = false;
     analogControlStep();
   }
+
+  checkMotorSafetyTimeout();
 
   static unsigned long t=0;
   if (millis() - t > 100) { t = millis(); telemetryLine(); }
