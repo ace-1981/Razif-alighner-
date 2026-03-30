@@ -18,6 +18,9 @@ const uint8_t PIN_LIMIT_RIGHT = 12;    // Right limit (NC)
 // Analog edge/eye sensor
 const uint8_t PIN_ANALOG_SENSOR = A0;  // 0..5V after divider/adapter
 
+// Centered indicator LED
+const uint8_t PIN_LED_CENTERED = 9;    // HIGH when analog sensor is at center
+
 // ======================= POLARITY =======================
 // Adjust to match your adapter logic
 const bool MODE_SEEK_ACTIVE_HIGH = true;   // D2 HIGH => seek mode enabled
@@ -30,8 +33,12 @@ const float ANALOG_CENTER_V   = 2.00f;  // center setpoint
 const float ANALOG_DEADBAND_V = 0.08f;
 const float KP = 90.0f;
 
-const int PWM_MIN = 55;
-const int PWM_MAX = 200;
+const int PWM_MIN = 30;
+const int PWM_MAX = 100;
+
+// No-paper detection: if voltage outside this range, assume no paper -> stop
+const float ANALOG_VALID_LOW  = 0.3f;
+const float ANALOG_VALID_HIGH = 2.8f;
 
 // Mapping: err>0 => move RIGHT?
 bool ERR_POS_MOVE_RIGHT = true;
@@ -87,6 +94,10 @@ bool limitRightActive() {
 }
 
 // ======================= JOG (serial override) =======================
+// Forward declarations
+void homingReset();
+bool calibrated = false;  // defined here so processSerialCommands can use it
+
 // Send 'R' = jog right, 'L' = jog left, 'S' = stop jog
 const int JOG_PWM = 60;
 int8_t g_jog = 0;   // -1 left, 0 off, +1 right
@@ -97,6 +108,7 @@ void processSerialCommands() {
     if      (c == 'R') g_jog = +1;
     else if (c == 'L') g_jog = -1;
     else if (c == 'S') g_jog =  0;
+    else if (c == 'H') { homingReset(); calibrated = false; }  // force re-calibrate
   }
 }
 
@@ -145,26 +157,30 @@ const int CAL_PWM = 65;
 const int SETTLE_DELAY_MS = 200;     // pause at limits during calibration
 const float SAFETY_MARGIN = 1.15f;   // 15% extra on max travel time
 
-// Homing states:
+// Homing states (double-pass for accuracy):
 // 1) Move left until left limit
-// 2) Move right until right limit (measure travel time)
-// 3) Move left for half the travel time (center)
-// 4) Done
+// 2) Move right until right limit (measure T_right)
+// 3) Move left until left limit again (measure T_left)
+// 4) Move right for average(T_right, T_left) / 2 = center
+// 5) Done
 enum HomingState : uint8_t {
-  CAL_FIND_LEFT_LIMIT = 0,
-  CAL_FIND_RIGHT_LIMIT = 1,
-  CAL_GO_TO_CENTER = 2,
-  SEEK_DONE = 3
+  CAL_FIND_LEFT_LIMIT   = 0,
+  CAL_FIND_RIGHT_LIMIT  = 1,
+  CAL_FIND_LEFT_AGAIN   = 2,
+  CAL_GO_TO_CENTER      = 3,
+  SEEK_DONE             = 4
 };
 
 HomingState homingState = CAL_FIND_LEFT_LIMIT;
 
 // Calibration data
-unsigned long calStartMs = 0;        // timer for current phase
-unsigned long calTravelMs = 0;       // measured full travel time (limit to limit)
-unsigned long calHalfTravelMs = 0;   // half = center
-unsigned long maxRunMs = 0;          // safety: max allowed motor run per direction
-bool calibrated = false;
+unsigned long calStartMs = 0;           // timer for current phase
+unsigned long calTravelRightMs = 0;     // measured L->R travel time
+unsigned long calTravelLeftMs = 0;      // measured R->L travel time
+unsigned long calTravelMs = 0;          // average of both directions
+unsigned long calHalfTravelMs = 0;      // half = center
+unsigned long maxRunMs = 0;             // safety: max allowed motor run per direction
+// calibrated declared above (before processSerialCommands)
 
 // Motor runtime safety
 unsigned long motorRunStartMs = 0;
@@ -200,11 +216,11 @@ void homingStep() {
   switch (homingState) {
 
     case CAL_FIND_LEFT_LIMIT: {
-      // Move left until left limit
+      // Phase 1: Move left until left limit
       if (limitLeftActive()) {
         motorStop();
         delay(SETTLE_DELAY_MS);
-        calStartMs = millis();   // start timing the rightward trip
+        calStartMs = millis();
         homingState = CAL_FIND_RIGHT_LIMIT;
         return;
       }
@@ -213,31 +229,46 @@ void homingStep() {
     }
 
     case CAL_FIND_RIGHT_LIMIT: {
-      // Move right, measuring time until right limit
+      // Phase 2: Move right, measure L->R time
       if (limitRightActive()) {
-        calTravelMs = millis() - calStartMs;
-        calHalfTravelMs = calTravelMs / 2;
-        maxRunMs = (unsigned long)(calTravelMs * SAFETY_MARGIN);
-        calibrated = true;
+        calTravelRightMs = millis() - calStartMs;
         motorStop();
         delay(SETTLE_DELAY_MS);
-        calStartMs = millis();   // start timing the center-bound trip
-        homingState = CAL_GO_TO_CENTER;
+        calStartMs = millis();
+        homingState = CAL_FIND_LEFT_AGAIN;
         return;
       }
       motorRight(CAL_PWM);
       return;
     }
 
+    case CAL_FIND_LEFT_AGAIN: {
+      // Phase 3: Move left, measure R->L time
+      if (limitLeftActive()) {
+        calTravelLeftMs = millis() - calStartMs;
+        calTravelMs = (calTravelRightMs + calTravelLeftMs) / 2;
+        calHalfTravelMs = calTravelMs / 2;
+        maxRunMs = (unsigned long)(calTravelMs * SAFETY_MARGIN);
+        calibrated = true;
+        motorStop();
+        delay(SETTLE_DELAY_MS);
+        calStartMs = millis();
+        homingState = CAL_GO_TO_CENTER;
+        return;
+      }
+      motorLeft(CAL_PWM);
+      return;
+    }
+
     case CAL_GO_TO_CENTER: {
-      // Move left for half the measured travel time
+      // Phase 4: Move right for half the average travel time
       unsigned long elapsed = millis() - calStartMs;
       if (elapsed >= calHalfTravelMs) {
         motorStop();
         homingState = SEEK_DONE;
         return;
       }
-      motorLeft(CAL_PWM);
+      motorRight(CAL_PWM);
       return;
     }
 
@@ -270,12 +301,23 @@ void checkMotorSafetyTimeout() {
 // ======================= ANALOG CONTROL =======================
 void analogControlStep() {
   float v = rawToV(readAnalogRawAvg(10));
+
+  // No paper: voltage outside valid range -> stop motor, LED off
+  if (v < ANALOG_VALID_LOW || v > ANALOG_VALID_HIGH) {
+    motorStop();
+    digitalWrite(PIN_LED_CENTERED, LOW);
+    return;
+  }
+
   float err = v - ANALOG_CENTER_V;
 
   if (fabs(err) <= ANALOG_DEADBAND_V) {
     motorStop();
+    digitalWrite(PIN_LED_CENTERED, HIGH);  // centered!
     return;
   }
+
+  digitalWrite(PIN_LED_CENTERED, LOW);  // not centered
 
   int pwm = (int)(PWM_MIN + KP * fabs(err));
   if (pwm > PWM_MAX) pwm = PWM_MAX;
@@ -325,7 +367,9 @@ void telemetryLine() {
 
   Serial.print(" hs=");    Serial.print((int)homingState);
   Serial.print(" cal=");   Serial.print(calibrated ? 1 : 0);
-  Serial.print(" trvMs="); Serial.print(calTravelMs);
+  Serial.print(" tR=");    Serial.print(calTravelRightMs);
+  Serial.print(" tL=");    Serial.print(calTravelLeftMs);
+  Serial.print(" tAvg=");  Serial.print(calTravelMs);
   Serial.println();
 }
 
@@ -339,6 +383,9 @@ void setup() {
 
   pinMode(PIN_PWM_RIGHT, OUTPUT);
   pinMode(PIN_PWM_LEFT,  OUTPUT);
+
+  pinMode(PIN_LED_CENTERED, OUTPUT);
+  digitalWrite(PIN_LED_CENTERED, LOW);
 
   pinMode(PIN_MODE_SEEK,     INPUT_PULLUP);
   pinMode(PIN_CENTER_SENSOR, INPUT);        // no pullup - let adapter drive D3
