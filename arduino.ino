@@ -205,13 +205,21 @@ void homingStep() {
         return;
       }
 
-      // Move fast in seekDir (limits handled by checkLimitBackoff)
+      // Move fast in seekDir; on limit -> flip direction and continue
       if (seekDirRight) {
-        if (!limitRightActive()) motorRight(SEEK_PWM_FAST);
-        else motorStop();
+        if (!limitRightActive()) {
+          motorRight(SEEK_PWM_FAST);
+        } else {
+          motorStop();
+          seekDirRight = false;  // hit right limit -> go left
+        }
       } else {
-        if (!limitLeftActive()) motorLeft(SEEK_PWM_FAST);
-        else motorStop();
+        if (!limitLeftActive()) {
+          motorLeft(SEEK_PWM_FAST);
+        } else {
+          motorStop();
+          seekDirRight = true;   // hit left limit -> go right
+        }
       }
       return;
     }
@@ -356,13 +364,13 @@ void setup() {
 
 void loop() {
   processSerialCommands();
-  checkLimitBackoff();
 
   static bool wasSeekMode = false;
   bool isSeek = seekModeEnabled();
 
   if (g_jog != 0) {
-    // jog override: move motor directly, ignore seek/analog
+    // jog override: limit backoff active for safety
+    checkLimitBackoff();
     if (g_jog > 0) {
       if (!limitRightActive()) motorRight(JOG_PWM);
       else motorStop();
@@ -372,7 +380,8 @@ void loop() {
     }
     wasSeekMode = false;
   } else if (isSeek) {
-    // On entering seek mode: always reset so we start LEFT
+    // homing mode - limits handled inside homingStep (flip direction)
+    // NO checkLimitBackoff here - homing manages its own limits
     if (!wasSeekMode) {
       homingReset();
       wasSeekMode = true;
@@ -380,7 +389,8 @@ void loop() {
     if (homingState == SEEK_DONE) motorStop();
     else homingStep();
   } else {
-    // normal analog mode
+    // normal analog mode - limit backoff active for safety
+    checkLimitBackoff();
     if (wasSeekMode) homingReset();
     wasSeekMode = false;
     analogControlStep();
