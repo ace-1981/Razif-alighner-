@@ -144,11 +144,11 @@ void checkLimitBackoff() {
 
 // ======================= HOMING (SEEK) =======================
 // Fast search speed
-const int SEEK_PWM_FAST = 18;
+const int SEEK_PWM_FAST = 22;
 // Backoff speed (slow)
-const int SEEK_PWM_SLOW = 10;
+const int SEEK_PWM_SLOW = 12;
 // Fine approach speed (very slow)
-const int SEEK_PWM_FINE = 12;
+const int SEEK_PWM_FINE = 15;
 
 const uint16_t BOUNCE_DELAY_MS = 80;
 
